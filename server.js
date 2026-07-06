@@ -6,147 +6,162 @@ const PORT = Number(process.env.PORT || 8787);
 const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS || 120000);
 const POLL_TIMEOUT_MS = Number(process.env.POLL_TIMEOUT_MS || 25000);
 
-const jobs = [];
-const pendingPolls = [];
-const waitingResults = new Map();
-let lastBridgeSeenAt = 0;
+function createApp(options = {}) {
+  const jobTimeoutMs = options.jobTimeoutMs || JOB_TIMEOUT_MS;
+  const pollTimeoutMs = options.pollTimeoutMs || POLL_TIMEOUT_MS;
+  const jobs = [];
+  const pendingPolls = [];
+  const waitingResults = new Map();
+  let lastBridgeSeenAt = 0;
 
-const server = http.createServer(async (req, res) => {
-  try {
-    if (req.method === "OPTIONS") {
-      return sendJson(res, 204, null);
-    }
-
-    if (req.method === "GET" && req.url === "/health") {
-      return sendJson(res, 200, {
-        ok: true,
-        bridgeOnline: Date.now() - lastBridgeSeenAt < 35000,
-        queued: jobs.length,
-        pending: waitingResults.size
-      });
-    }
-
-    if (req.method === "GET" && (req.url === "/" || req.url === "/playground")) {
-      return sendHtml(res, 200, renderPlaygroundHtml());
-    }
-
-    if (req.method === "GET" && req.url === "/bridge/next") {
-      lastBridgeSeenAt = Date.now();
-      return handleBridgeNext(res);
-    }
-
-    if (req.method === "POST" && req.url === "/bridge/result") {
-      const body = await readJson(req);
-      return handleBridgeResult(res, body);
-    }
-
-    if (req.method === "POST" && req.url === "/v1/chat/completions") {
-      const body = await readJson(req);
-      return handleChatCompletions(res, body);
-    }
-
-    return sendJson(res, 404, { error: "Not found" });
-  } catch (error) {
-    return sendJson(res, 500, { error: error.message || String(error) });
-  }
-});
-
-server.listen(PORT, HOST, () => {
-  console.log(`DeepSeek local API listening on http://${HOST}:${PORT}`);
-});
-
-function handleBridgeNext(res) {
-  const job = jobs.shift();
-  if (job) {
-    return sendJson(res, 200, job);
-  }
-
-  const timeout = setTimeout(() => {
-    removePoll(res);
-    sendJson(res, 204, null);
-  }, POLL_TIMEOUT_MS);
-
-  pendingPolls.push({ res, timeout });
-}
-
-function handleBridgeResult(res, body) {
-  const entry = waitingResults.get(body.id);
-  if (!entry) {
-    return sendJson(res, 404, { error: "Unknown job id" });
-  }
-
-  clearTimeout(entry.timeout);
-  waitingResults.delete(body.id);
-
-  if (body.error) {
-    entry.reject(new Error(body.error));
-  } else {
-    entry.resolve(String(body.answer || ""));
-  }
-
-  return sendJson(res, 200, { ok: true });
-}
-
-async function handleChatCompletions(res, body) {
-  const messages = Array.isArray(body.messages) ? body.messages : [];
-  const prompt = messages
-    .map((message) => `${message.role || "user"}: ${message.content || ""}`)
-    .join("\n")
-    .trim();
-
-  if (!prompt) {
-    return sendJson(res, 400, { error: "messages are required" });
-  }
-
-  const answer = await enqueuePrompt(prompt);
-
-  return sendJson(res, 200, {
-    id: `chatcmpl-${crypto.randomUUID()}`,
-    object: "chat.completion",
-    created: Math.floor(Date.now() / 1000),
-    model: body.model || "deepseek-web",
-    choices: [
-      {
-        index: 0,
-        message: {
-          role: "assistant",
-          content: answer
-        },
-        finish_reason: "stop"
+  const server = http.createServer(async (req, res) => {
+    try {
+      if (req.method === "OPTIONS") {
+        return sendJson(res, 204, null);
       }
-    ]
+
+      if (req.method === "GET" && req.url === "/health") {
+        return sendJson(res, 200, {
+          ok: true,
+          bridgeOnline: Date.now() - lastBridgeSeenAt < 35000,
+          queued: jobs.length,
+          pending: waitingResults.size
+        });
+      }
+
+      if (req.method === "GET" && (req.url === "/" || req.url === "/playground")) {
+        return sendHtml(res, 200, renderPlaygroundHtml());
+      }
+
+      if (req.method === "GET" && req.url === "/bridge/next") {
+        lastBridgeSeenAt = Date.now();
+        return handleBridgeNext(res);
+      }
+
+      if (req.method === "POST" && req.url === "/bridge/result") {
+        const body = await readJson(req);
+        return handleBridgeResult(res, body);
+      }
+
+      if (req.method === "POST" && req.url === "/v1/chat/completions") {
+        const body = await readJson(req);
+        return await handleChatCompletions(res, body);
+      }
+
+      return sendJson(res, 404, { error: "Not found" });
+    } catch (error) {
+      return sendJson(res, 500, { error: error.message || String(error) });
+    }
   });
-}
 
-function enqueuePrompt(prompt) {
-  const id = crypto.randomUUID();
-  const job = { id, prompt };
+  function handleBridgeNext(res) {
+    const job = jobs.shift();
+    if (job) {
+      return sendJson(res, 200, job);
+    }
 
-  const promise = new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
-      waitingResults.delete(id);
-      reject(new Error("Timed out waiting for DeepSeek web response"));
-    }, JOB_TIMEOUT_MS);
+      removePoll(res);
+      sendJson(res, 204, null);
+    }, pollTimeoutMs);
 
-    waitingResults.set(id, { resolve, reject, timeout });
-  });
-
-  const poll = pendingPolls.shift();
-  if (poll) {
-    clearTimeout(poll.timeout);
-    sendJson(poll.res, 200, job);
-  } else {
-    jobs.push(job);
+    pendingPolls.push({ res, timeout });
   }
 
-  return promise;
+  function handleBridgeResult(res, body) {
+    const entry = waitingResults.get(body.id);
+    if (!entry) {
+      return sendJson(res, 404, { error: "Unknown job id" });
+    }
+
+    clearTimeout(entry.timeout);
+    waitingResults.delete(body.id);
+
+    if (body.error) {
+      entry.reject(new Error(body.error));
+    } else {
+      entry.resolve(String(body.answer || ""));
+    }
+
+    return sendJson(res, 200, { ok: true });
+  }
+
+  async function handleChatCompletions(res, body) {
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const prompt = messages
+      .map((message) => `${message.role || "user"}: ${message.content || ""}`)
+      .join("\n")
+      .trim();
+
+    if (!prompt) {
+      return sendJson(res, 400, { error: "messages are required" });
+    }
+
+    const answer = await enqueuePrompt(prompt);
+
+    return sendJson(res, 200, {
+      id: `chatcmpl-${crypto.randomUUID()}`,
+      object: "chat.completion",
+      created: Math.floor(Date.now() / 1000),
+      model: body.model || "deepseek-web",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: answer
+          },
+          finish_reason: "stop"
+        }
+      ]
+    });
+  }
+
+  function enqueuePrompt(prompt) {
+    const id = crypto.randomUUID();
+    const job = { id, prompt };
+
+    const promise = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        const index = jobs.findIndex((item) => item.id === id);
+        if (index !== -1) jobs.splice(index, 1);
+        waitingResults.delete(id);
+        reject(new Error("Timed out waiting for DeepSeek web response"));
+      }, jobTimeoutMs);
+
+      waitingResults.set(id, { resolve, reject, timeout });
+    });
+
+    const poll = pendingPolls.shift();
+    if (poll) {
+      clearTimeout(poll.timeout);
+      sendJson(poll.res, 200, job);
+    } else {
+      jobs.push(job);
+    }
+
+    return promise;
+  }
+
+  function removePoll(res) {
+    const index = pendingPolls.findIndex((poll) => poll.res === res);
+    if (index !== -1) {
+      pendingPolls.splice(index, 1);
+    }
+  }
+
+  return server;
 }
 
-function removePoll(res) {
-  const index = pendingPolls.findIndex((poll) => poll.res === res);
-  if (index !== -1) {
-    pendingPolls.splice(index, 1);
-  }
+if (require.main === module) {
+  createApp().listen(PORT, HOST, () => {
+    console.log(`DeepSeek local API listening on http://${HOST}:${PORT}`);
+  });
+} else {
+  module.exports = {
+    createApp,
+    renderPlaygroundHtml
+  };
 }
 
 function readJson(req) {

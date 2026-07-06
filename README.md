@@ -30,6 +30,12 @@ Playground:
 http://127.0.0.1:8787/playground
 ```
 
+## Test
+
+```sh
+node --test
+```
+
 ## Use as API
 
 ```sh
