@@ -22,6 +22,20 @@ Or with Docker:
 docker compose up --build
 ```
 
+Run with local bash tool on the host:
+
+```sh
+ENABLE_BASH_TOOL=1 node server.js
+```
+
+When Docker is used, bash commands run inside the container.
+
+If bash is not available at `/bin/bash`, set:
+
+```sh
+BASH_TOOL_SHELL="$SHELL" ENABLE_BASH_TOOL=1 node server.js
+```
+
 Health check:
 
 ```sh

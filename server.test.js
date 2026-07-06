@@ -63,6 +63,33 @@ test("chat completion validates messages", async () => {
   });
 });
 
+test("bash tool loop sends local command result back to bridge", async () => {
+  await withServer({ enableBashTool: true, bashShell: process.env.SHELL || "/bin/sh" }, async (baseUrl) => {
+    const chat = postJson(`${baseUrl}/v1/chat/completions`, {
+      messages: [{ role: "user", content: "run pwd" }]
+    });
+
+    const first = await getJson(`${baseUrl}/bridge/next`);
+    assert.match(first.prompt, /"tool":"bash"/);
+
+    await postJson(`${baseUrl}/bridge/result`, {
+      id: first.id,
+      answer: JSON.stringify({ tool: "bash", cmd: "printf tool-ok" })
+    });
+
+    const second = await getJson(`${baseUrl}/bridge/next`);
+    assert.match(second.prompt, /tool-ok/);
+
+    await postJson(`${baseUrl}/bridge/result`, {
+      id: second.id,
+      answer: "command returned tool-ok"
+    });
+
+    const response = await chat;
+    assert.equal(response.choices[0].message.content, "command returned tool-ok");
+  });
+});
+
 test("chat completion times out without bridge result", async () => {
   await withServer({ jobTimeoutMs: 20 }, async (baseUrl) => {
     const response = await fetch(`${baseUrl}/v1/chat/completions`, {

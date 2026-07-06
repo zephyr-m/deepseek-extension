@@ -1,14 +1,24 @@
 const http = require("http");
 const crypto = require("crypto");
+const { exec } = require("child_process");
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 8787);
 const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS || 120000);
 const POLL_TIMEOUT_MS = Number(process.env.POLL_TIMEOUT_MS || 25000);
+const ENABLE_BASH_TOOL = process.env.ENABLE_BASH_TOOL === "1";
+const BASH_TOOL_SHELL = process.env.BASH_TOOL_SHELL || process.env.SHELL || "/bin/sh";
+const BASH_TOOL_TIMEOUT_MS = Number(process.env.BASH_TOOL_TIMEOUT_MS || 10000);
+const BASH_TOOL_MAX_BUFFER = Number(process.env.BASH_TOOL_MAX_BUFFER || 1024 * 128);
 
 function createApp(options = {}) {
   const jobTimeoutMs = options.jobTimeoutMs || JOB_TIMEOUT_MS;
   const pollTimeoutMs = options.pollTimeoutMs || POLL_TIMEOUT_MS;
+  const enableBashTool = options.enableBashTool ?? ENABLE_BASH_TOOL;
+  const bashShell = options.bashShell || BASH_TOOL_SHELL;
+  const bashTimeoutMs = options.bashTimeoutMs || BASH_TOOL_TIMEOUT_MS;
+  const bashMaxBuffer = options.bashMaxBuffer || BASH_TOOL_MAX_BUFFER;
+  const bashCwd = options.bashCwd || process.cwd();
   const jobs = [];
   const pendingPolls = [];
   const waitingResults = new Map();
@@ -97,7 +107,7 @@ function createApp(options = {}) {
       return sendJson(res, 400, { error: "messages are required" });
     }
 
-    const answer = await enqueuePrompt(prompt);
+    const answer = await runAgent(buildAgentPrompt(prompt));
 
     return sendJson(res, 200, {
       id: `chatcmpl-${crypto.randomUUID()}`,
@@ -141,6 +151,64 @@ function createApp(options = {}) {
     }
 
     return promise;
+  }
+
+  function buildAgentPrompt(prompt) {
+    if (!enableBashTool) return prompt;
+
+    return [
+      "You can request one local bash command by replying with JSON only:",
+      "{\"tool\":\"bash\",\"cmd\":\"your command\"}",
+      "Use it only when needed. After tool result, answer normally.",
+      "",
+      prompt
+    ].join("\n");
+  }
+
+  async function runAgent(prompt) {
+    let answer = await enqueuePrompt(prompt);
+
+    for (let step = 0; step < 3; step += 1) {
+      const call = parseToolCall(answer);
+      if (!call) return answer;
+      if (call.tool !== "bash" || !call.cmd) return answer;
+      if (!enableBashTool) return answer;
+
+      const result = await runBash(call.cmd);
+      answer = await enqueuePrompt([
+        "Tool result from local machine.",
+        "Return the final answer to the user.",
+        "",
+        JSON.stringify({
+          tool: "bash",
+          cmd: call.cmd,
+          exitCode: result.exitCode,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          error: result.error
+        }, null, 2)
+      ].join("\n"));
+    }
+
+    return answer;
+  }
+
+  function runBash(cmd) {
+    return new Promise((resolve) => {
+      exec(cmd, {
+        cwd: bashCwd,
+        shell: bashShell,
+        timeout: bashTimeoutMs,
+        maxBuffer: bashMaxBuffer
+      }, (error, stdout, stderr) => {
+        resolve({
+          exitCode: typeof error?.code === "number" ? error.code : 0,
+          stdout: String(stdout || "").slice(0, bashMaxBuffer),
+          stderr: String(stderr || "").slice(0, bashMaxBuffer),
+          error: error?.signal ? `killed by ${error.signal}` : error?.message || null
+        });
+      });
+    });
   }
 
   function removePoll(res) {
@@ -213,6 +281,24 @@ function sendHtml(res, statusCode, html) {
   res.statusCode = statusCode;
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(html);
+}
+
+function parseToolCall(text) {
+  const raw = String(text || "").trim();
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
+  const json = fenced || raw;
+
+  try {
+    const value = JSON.parse(json);
+    if (value && typeof value === "object") {
+      return {
+        tool: String(value.tool || ""),
+        cmd: String(value.cmd || value.command || "")
+      };
+    }
+  } catch {}
+
+  return null;
 }
 
 function renderPlaygroundHtml() {
