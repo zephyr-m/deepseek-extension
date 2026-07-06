@@ -235,9 +235,10 @@ function renderPlaygroundHtml() {
 
     body {
       margin: 0;
-      min-height: 100vh;
+      height: 100vh;
       display: grid;
       grid-template-rows: auto 1fr auto;
+      overflow: hidden;
     }
 
     header {
@@ -292,11 +293,14 @@ function renderPlaygroundHtml() {
       display: grid;
       grid-template-columns: 1fr 260px;
       gap: 16px;
+      min-height: 0;
       overflow: auto;
     }
 
     main {
       min-width: 0;
+      min-height: 0;
+      overflow: auto;
     }
 
     .messages {
@@ -343,6 +347,8 @@ function renderPlaygroundHtml() {
       padding-left: 16px;
       font-size: 13px;
       color: #525252;
+      min-height: 0;
+      overflow: auto;
     }
 
     aside h2 {
