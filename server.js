@@ -249,6 +249,12 @@ function renderPlaygroundHtml() {
       color: #525252;
     }
 
+    .bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
     .dot {
       width: 8px;
       height: 8px;
@@ -355,6 +361,15 @@ function renderPlaygroundHtml() {
       cursor: pointer;
     }
 
+    #call {
+      min-width: 84px;
+      background: #059669;
+    }
+
+    #call.live {
+      background: #dc2626;
+    }
+
     button:disabled {
       cursor: not-allowed;
       opacity: 0.55;
@@ -390,9 +405,12 @@ function renderPlaygroundHtml() {
 <body>
   <header>
     <h1>DeepSeek Local Playground</h1>
-    <div class="status">
-      <span id="dot" class="dot"></span>
-      <span id="status">checking</span>
+    <div class="bar">
+      <button id="call" type="button">Call</button>
+      <div class="status">
+        <span id="dot" class="dot"></span>
+        <span id="status">checking</span>
+      </div>
     </div>
   </header>
 
@@ -414,8 +432,24 @@ function renderPlaygroundHtml() {
     const form = document.getElementById("form");
     const input = document.getElementById("input");
     const send = document.getElementById("send");
+    const callButton = document.getElementById("call");
     const statusText = document.getElementById("status");
     const dot = document.getElementById("dot");
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recog = SpeechRecognition ? new SpeechRecognition() : null;
+    const call = { state: "idle", live: false };
+
+    if (recog) {
+      recog.lang = "ru-RU";
+      recog.continuous = false;
+      recog.interimResults = false;
+      recog.onresult = (event) => transition("thinking", event.results[0][0].transcript);
+      recog.onend = () => call.live && call.state === "listening" && listen();
+      recog.onerror = () => transition("idle");
+    } else {
+      callButton.disabled = true;
+      callButton.textContent = "No mic";
+    }
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -426,38 +460,10 @@ function renderPlaygroundHtml() {
       }
 
       input.value = "";
-      appendMessage("user", text);
-      setBusy(true);
-
-      const pending = appendMessage("assistant", "...");
-
-      try {
-        const response = await fetch("/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            model: "deepseek-web",
-            messages: [
-              { role: "user", content: text }
-            ]
-          })
-        });
-
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.error || "Request failed");
-        }
-
-        pending.textContent = data.choices?.[0]?.message?.content || "";
-      } catch (error) {
-        pending.textContent = "Error: " + (error.message || String(error));
-      } finally {
-        setBusy(false);
-        input.focus();
-      }
+      await ask(text, false);
     });
+
+    callButton.addEventListener("click", () => transition(call.live ? "idle" : "listening"));
 
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
@@ -476,6 +482,63 @@ function renderPlaygroundHtml() {
         dot.className = "dot offline";
         statusText.textContent = "server error";
       }
+    }
+
+    async function ask(text, voice) {
+      appendMessage("user", text);
+      setBusy(true);
+      const pending = appendMessage("assistant", "...");
+
+      try {
+        const response = await fetch("/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "deepseek-web",
+            messages: [{ role: "user", content: text }]
+          })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Request failed");
+        const answer = data.choices?.[0]?.message?.content || "";
+        pending.textContent = answer;
+        if (voice && call.live) transition("speaking", answer);
+      } catch (error) {
+        pending.textContent = "Error: " + (error.message || String(error));
+        transition("idle");
+      } finally {
+        setBusy(false);
+        input.focus();
+      }
+    }
+
+    function transition(next, data) {
+      call.state = next;
+      call.live = next !== "idle";
+      callButton.classList.toggle("live", call.live);
+      callButton.textContent = call.live ? next : "Call";
+      if (next === "idle") return stopVoice();
+      if (next === "listening") return listen();
+      if (next === "thinking") return ask(data, true);
+      if (next === "speaking") return speak(data, () => call.live && transition("listening"));
+    }
+
+    function speak(text, done) {
+      speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "ru-RU";
+      utterance.onend = done;
+      utterance.onerror = done;
+      speechSynthesis.speak(utterance);
+    }
+
+    function stopVoice() {
+      try { recog?.stop(); } catch {}
+      speechSynthesis.cancel();
+    }
+
+    function listen() {
+      try { recog.start(); } catch {}
     }
 
     function appendMessage(role, text) {
