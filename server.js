@@ -285,11 +285,18 @@ function renderPlaygroundHtml() {
       background: #dc2626;
     }
 
-    main {
+    .shell {
       width: min(920px, 100%);
       margin: 0 auto;
       padding: 20px;
+      display: grid;
+      grid-template-columns: 1fr 260px;
+      gap: 16px;
       overflow: auto;
+    }
+
+    main {
+      min-width: 0;
     }
 
     .messages {
@@ -329,6 +336,34 @@ function renderPlaygroundHtml() {
       border: 0;
       padding: 4px 0;
       font-size: 13px;
+    }
+
+    aside {
+      border-left: 1px solid #d4d4d4;
+      padding-left: 16px;
+      font-size: 13px;
+      color: #525252;
+    }
+
+    aside h2 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      font-weight: 650;
+      color: #171717;
+    }
+
+    .heard {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .heard div {
+      padding: 8px;
+      border: 1px solid #d4d4d4;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #171717;
     }
 
     form {
@@ -399,8 +434,15 @@ function renderPlaygroundHtml() {
         padding: 0 12px;
       }
 
-      main {
+      .shell {
+        grid-template-columns: 1fr;
         padding: 12px;
+      }
+
+      aside {
+        border-left: 0;
+        border-top: 1px solid #d4d4d4;
+        padding: 12px 0 0;
       }
 
       .message {
@@ -434,11 +476,17 @@ function renderPlaygroundHtml() {
     </div>
   </header>
 
-  <main>
-    <div id="messages" class="messages">
-      <div class="message system">Открой вкладку chat.deepseek.com, залогинься и оставь ее открытой.</div>
-    </div>
-  </main>
+  <div class="shell">
+    <main>
+      <div id="messages" class="messages">
+        <div class="message system">Открой вкладку chat.deepseek.com, залогинься и оставь ее открытой.</div>
+      </div>
+    </main>
+    <aside>
+      <h2>Heard</h2>
+      <div id="heard" class="heard"></div>
+    </aside>
+  </div>
 
   <form id="form">
     <div class="composer">
@@ -449,6 +497,7 @@ function renderPlaygroundHtml() {
 
   <script>
     const messages = document.getElementById("messages");
+    const heardLog = document.getElementById("heard");
     const form = document.getElementById("form");
     const input = document.getElementById("input");
     const send = document.getElementById("send");
@@ -554,6 +603,7 @@ function renderPlaygroundHtml() {
     function heard(text) {
       const value = text.trim();
       const low = value.toLowerCase();
+      appendHeard(voice.mode, value);
       if (voice.mode === "command") {
         if (low.includes("звонок") || low.includes("позвони") || low.includes("call")) transition("listening");
         return;
@@ -607,6 +657,13 @@ function renderPlaygroundHtml() {
       messages.appendChild(node);
       node.scrollIntoView({ block: "end" });
       return node;
+    }
+
+    function appendHeard(mode, text) {
+      const node = document.createElement("div");
+      node.textContent = mode + ": " + text;
+      heardLog.prepend(node);
+      while (heardLog.children.length > 20) heardLog.lastChild.remove();
     }
 
     function setBusy(value) {

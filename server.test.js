@@ -8,7 +8,9 @@ test("playground contains chat, call FSM, voice command trigger", () => {
   assert.match(html, /id="messages"/);
   assert.match(html, /id="call"/);
   assert.match(html, /id="voice"/);
+  assert.match(html, /id="heard"/);
   assert.match(html, /function transition/);
+  assert.match(html, /function appendHeard/);
   assert.match(html, /звонок/);
   assert.match(html, /AudioContext/);
 });
