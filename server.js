@@ -155,7 +155,8 @@ function createApp(options = {}) {
 
 if (require.main === module) {
   createApp().listen(PORT, HOST, () => {
-    console.log(`DeepSeek local API listening on http://${HOST}:${PORT}`);
+    const shownHost = HOST === "0.0.0.0" ? "127.0.0.1" : HOST;
+    console.log(`DeepSeek local API listening on http://${shownHost}:${PORT}`);
   });
 } else {
   module.exports = {
@@ -533,6 +534,8 @@ function renderPlaygroundHtml() {
       callButton.textContent = "No mic";
     }
 
+    queueMicrotask(() => recog && setVoice(true));
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
 
@@ -546,7 +549,7 @@ function renderPlaygroundHtml() {
     });
 
     callButton.addEventListener("click", () => transition(call.live ? "idle" : "listening"));
-    voiceButton.addEventListener("click", toggleVoice);
+    voiceButton.addEventListener("click", () => setVoice(!voice.command));
 
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
@@ -618,8 +621,8 @@ function renderPlaygroundHtml() {
       transition("thinking", value);
     }
 
-    function toggleVoice() {
-      voice.command = !voice.command;
+    function setVoice(enabled) {
+      voice.command = enabled;
       voiceButton.classList.toggle("on", voice.command);
       voiceButton.textContent = voice.command ? "Voice on" : "Voice";
       if (voice.command && !call.live) listen("command");

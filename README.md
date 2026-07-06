@@ -16,6 +16,12 @@ Minimal browser extension plus local Node server for using the DeepSeek web UI t
 node server.js
 ```
 
+Or with Docker:
+
+```sh
+docker compose up --build
+```
+
 Health check:
 
 ```sh
