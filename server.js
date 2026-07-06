@@ -370,6 +370,10 @@ function renderPlaygroundHtml() {
       background: #dc2626;
     }
 
+    #voice.on {
+      background: #7c3aed;
+    }
+
     button:disabled {
       cursor: not-allowed;
       opacity: 0.55;
@@ -406,6 +410,7 @@ function renderPlaygroundHtml() {
   <header>
     <h1>DeepSeek Local Playground</h1>
     <div class="bar">
+      <button id="voice" type="button">Voice</button>
       <button id="call" type="button">Call</button>
       <div class="status">
         <span id="dot" class="dot"></span>
@@ -432,22 +437,29 @@ function renderPlaygroundHtml() {
     const form = document.getElementById("form");
     const input = document.getElementById("input");
     const send = document.getElementById("send");
+    const voiceButton = document.getElementById("voice");
     const callButton = document.getElementById("call");
     const statusText = document.getElementById("status");
     const dot = document.getElementById("dot");
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recog = SpeechRecognition ? new SpeechRecognition() : null;
     const call = { state: "idle", live: false };
+    const voice = { command: false, mode: "idle" };
 
     if (recog) {
       recog.lang = "ru-RU";
       recog.continuous = false;
       recog.interimResults = false;
-      recog.onresult = (event) => transition("thinking", event.results[0][0].transcript);
-      recog.onend = () => call.live && call.state === "listening" && listen();
+      recog.onresult = (event) => heard(event.results[0][0].transcript);
+      recog.onend = () => {
+        if (call.live && call.state === "listening") return listen("call");
+        if (voice.command && !call.live) return listen("command");
+      };
       recog.onerror = () => transition("idle");
     } else {
+      voiceButton.disabled = true;
       callButton.disabled = true;
+      voiceButton.textContent = "No mic";
       callButton.textContent = "No mic";
     }
 
@@ -464,6 +476,7 @@ function renderPlaygroundHtml() {
     });
 
     callButton.addEventListener("click", () => transition(call.live ? "idle" : "listening"));
+    voiceButton.addEventListener("click", toggleVoice);
 
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
@@ -518,9 +531,28 @@ function renderPlaygroundHtml() {
       callButton.classList.toggle("live", call.live);
       callButton.textContent = call.live ? next : "Call";
       if (next === "idle") return stopVoice();
-      if (next === "listening") return listen();
+      if (next === "listening") return beep(), listen("call");
       if (next === "thinking") return ask(data, true);
       if (next === "speaking") return speak(data, () => call.live && transition("listening"));
+    }
+
+    function heard(text) {
+      const value = text.trim();
+      const low = value.toLowerCase();
+      if (voice.mode === "command") {
+        if (low.includes("звонок") || low.includes("позвони") || low.includes("call")) transition("listening");
+        return;
+      }
+      if (low.includes("стоп") || low.includes("отбой") || low.includes("stop")) return transition("idle");
+      transition("thinking", value);
+    }
+
+    function toggleVoice() {
+      voice.command = !voice.command;
+      voiceButton.classList.toggle("on", voice.command);
+      voiceButton.textContent = voice.command ? "Voice on" : "Voice";
+      if (voice.command && !call.live) listen("command");
+      else if (!call.live) stopVoice();
     }
 
     function speak(text, done) {
@@ -537,8 +569,20 @@ function renderPlaygroundHtml() {
       speechSynthesis.cancel();
     }
 
-    function listen() {
+    function listen(mode) {
+      voice.mode = mode;
       try { recog.start(); } catch {}
+    }
+
+    function beep() {
+      const ctx = new AudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 880;
+      gain.gain.value = 0.08;
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.12);
     }
 
     function appendMessage(role, text) {
